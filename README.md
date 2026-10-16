@@ -39,10 +39,13 @@ go build -o runall .
 runall <command> [args...]
 ```
 
+Run `runall` with no arguments (or `runall -h` / `--help`) to print usage.
+
 Examples:
 
 ```
 runall git pull
+runall make test
 runall git status --short
 runall ls -la
 runall sh -c 'git log -1 --oneline | cat'

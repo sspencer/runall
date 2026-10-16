@@ -29,10 +29,26 @@ type result struct {
 	err    error
 }
 
+const usage = `Usage: runall <command> [args...]
+
+Runs the specified command in each immediate subdirectory, in parallel, and
+prints each directory's output in alphabetical order once all have finished.
+
+Examples:
+  runall git pull
+  runall make test
+  runall ls -la
+  runall sh -c 'git log -1 --oneline | cat'
+`
+
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: runall <command> [args...]")
+		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
+	}
+	if os.Args[1] == "-h" || os.Args[1] == "--help" {
+		fmt.Print(usage)
+		return
 	}
 
 	dirs, err := subdirectories(".")
