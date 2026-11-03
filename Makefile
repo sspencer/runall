@@ -1,14 +1,11 @@
 BINARY := runall
 BINDIR := $(or $(shell go env GOBIN),$(shell go env GOPATH)/bin)
 
-.PHONY: all build install uninstall vet clean
+.PHONY: all install uninstall vet clean
 
 all: install
 
-build:
-	go build -o $(BINARY) .
-
-install: build
+install:
 	go install .
 	@echo "Installed $(BINDIR)/$(BINARY)"
 
