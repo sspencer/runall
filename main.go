@@ -88,7 +88,7 @@ func main() {
 				fmt.Println()
 			}
 			fmt.Printf("==> %s <==\n", r.dir)
-			os.Stdout.Write(r.output.Bytes())
+			_, _ = os.Stdout.Write(r.output.Bytes())
 			if r.output.Len() > 0 && !bytes.HasSuffix(r.output.Bytes(), []byte("\n")) {
 				fmt.Println()
 			}
