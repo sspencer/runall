@@ -1,7 +1,7 @@
 BINARY := runall
 BINDIR := $(or $(shell go env GOBIN),$(shell go env GOPATH)/bin)
 
-.PHONY: all install uninstall vet clean
+.PHONY: all install uninstall vet lint clean
 
 all: install
 
@@ -14,6 +14,9 @@ uninstall:
 
 vet:
 	go vet ./...
+
+lint:
+	golangci-lint run ./...
 
 clean:
 	rm -f $(BINARY)
