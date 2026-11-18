@@ -1,0 +1,3 @@
+# .runallrc
+--async
+--command=git pull --rebase

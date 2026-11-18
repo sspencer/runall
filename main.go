@@ -1,19 +1,24 @@
 // Command runall runs the given command in every immediate subdirectory of the
 // current directory, in parallel, and prints each directory's buffered output
-// in alphabetical order once all commands have finished. With -s, it instead
-// runs the command in one directory at a time, streaming output as it goes.
+// in alphabetical order once all commands have finished. With -s/--sync, it
+// instead runs the command in one directory at a time, streaming output as it
+// goes. Default options and the command can be set in a config file (.runallrc
+// in the current directory, or the file named by --conf); command-line
+// arguments override it.
 //
 // Usage:
 //
 //	runall git pull
 //	runall ls -la
 //	runall -s git pull
+//	runall --sync --command='git pull'
 package main
 
 import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -24,6 +29,9 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+
+	"github.com/schollz/progressbar/v3"
+	"golang.org/x/term"
 )
 
 type result struct {
@@ -32,37 +40,67 @@ type result struct {
 	err    error
 }
 
-const usage = `Usage: runall [-s] <command> [args...]
+const usage = `Usage: runall [options] <command> [args...]
+       runall [options] --command=<command> [args...]
 
 Runs the specified command in each immediate subdirectory, in parallel, and
 prints each directory's output in alphabetical order once all have finished.
 
 Options:
-  -s  Run synchronously: one directory at a time, in alphabetical order,
-      with output streamed directly to the terminal.
+  -s, --sync[=true|false]   Run synchronously: one directory at a time, in
+                            alphabetical order, with output streamed directly
+                            to the terminal. Default: false.
+  --async[=true|false]      Run in parallel (the default). --async=false is
+                            the same as --sync. If both are given, the last
+                            one wins.
+  --command=<cmd>           The command to run, as a single string. Use
+                            instead of giving the command as arguments.
+  -p, --progress[=true|false]
+                            Show a progress bar on stderr counting the
+                            directories completed. Ignored if stderr is not
+                            a terminal. Default: false.
+  --conf=<file>             Read options from <file> instead of ./.runallrc.
+                            --conf= (empty) reads no config file at all.
+  -h, --help                Show this help.
+
+Config file:
+  Unless --conf is given, options are read from .runallrc in the current
+  directory, if it exists, before the command line, which overrides them.
+  Each line holds one argument, exactly as written (no quoting needed).
+  Blank lines and lines starting with '#' are ignored. --conf is ignored in
+  a config file. For example:
+
+    # .runallrc
+    --sync
+    --command=git pull --rebase
 
 Examples:
   runall git pull
   runall make test
   runall ls -la
   runall -s git pull
+  runall --async git status
+  runall -p git pull
+  runall --command='git log -1 --oneline'
+  runall --conf=../pull.runallrc git status
   runall sh -c 'git log -1 --oneline | cat'
 `
 
 func main() {
-	args := os.Args[1:]
-	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
+	opts, err := resolveOptions(os.Args[1:])
+	if errors.Is(err, flag.ErrHelp) {
 		fmt.Print(usage)
 		return
 	}
-	sequential := len(args) > 0 && args[0] == "-s"
-	if sequential {
-		args = args[1:]
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "runall: %v\n\nRun 'runall --help' for usage.\n", err)
+		os.Exit(2)
 	}
-	if len(args) == 0 {
+	if len(opts.command) == 0 {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
+	args := opts.command
 
 	dirs, err := subdirectories(".")
 	if err != nil {
@@ -77,11 +115,23 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	var bar *progressbar.ProgressBar
+	// The bar redraws itself in place, which only makes sense on a terminal.
+	if opts.progress && term.IsTerminal(int(os.Stderr.Fd())) {
+		bar = newProgressBar(len(dirs))
+	}
+
 	var failed, total int
-	if sequential {
-		failed, total = runSync(ctx, dirs, args[0], args[1:])
+	if opts.sync {
+		failed, total = runSync(ctx, dirs, args[0], args[1:], bar)
+		if bar != nil {
+			bar.Clear() // in case it was interrupted before finishing
+		}
 	} else {
-		results := run(ctx, dirs, args[0], args[1:])
+		results := run(ctx, dirs, args[0], args[1:], bar)
+		if bar != nil {
+			bar.Clear()
+		}
 		total = len(results)
 		for i, r := range results {
 			if i > 0 {
@@ -135,13 +185,33 @@ func subdirectories(root string) ([]string, error) {
 	return dirs, nil
 }
 
+// newProgressBar returns a progress bar on stderr that counts n directories.
+// It erases itself once all n are done.
+func newProgressBar(n int) *progressbar.ProgressBar {
+	return progressbar.NewOptions(n,
+		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionSetDescription("runall"),
+		progressbar.OptionSetWidth(30),
+		progressbar.OptionShowCount(),
+		progressbar.OptionSetElapsedTime(true),
+		progressbar.OptionSetPredictTime(false),
+		progressbar.OptionSetRenderBlankState(true),
+		progressbar.OptionClearOnFinish(),
+	)
+}
+
 // runSync executes the command in each directory one at a time, connecting it
-// directly to the terminal. It stops early if ctx is cancelled and returns the
-// number of commands that failed and the number that were run.
-func runSync(ctx context.Context, dirs []string, name string, args []string) (failed, total int) {
+// directly to the terminal. If bar is non-nil, it is advanced after each
+// directory and erased while a command runs so it doesn't mix with the
+// command's output. It stops early if ctx is cancelled and returns the number
+// of commands that failed and the number that were run.
+func runSync(ctx context.Context, dirs []string, name string, args []string, bar *progressbar.ProgressBar) (failed, total int) {
 	for i, dir := range dirs {
 		if ctx.Err() != nil {
 			break
+		}
+		if bar != nil {
+			bar.Clear()
 		}
 		if i > 0 {
 			fmt.Println()
@@ -152,13 +222,17 @@ func runSync(ctx context.Context, dirs []string, name string, args []string) (fa
 			failed++
 			fmt.Printf("runall: %s: %v\n", dir, err)
 		}
+		if bar != nil {
+			bar.Add(1)
+		}
 	}
 	return failed, total
 }
 
 // run executes the command in each directory concurrently and returns the
-// results in the same order as dirs.
-func run(ctx context.Context, dirs []string, name string, args []string) []*result {
+// results in the same order as dirs. If bar is non-nil, it is advanced as each
+// directory finishes.
+func run(ctx context.Context, dirs []string, name string, args []string, bar *progressbar.ProgressBar) []*result {
 	results := make([]*result, len(dirs))
 	var wg sync.WaitGroup
 	for i, dir := range dirs {
@@ -166,6 +240,9 @@ func run(ctx context.Context, dirs []string, name string, args []string) []*resu
 		results[i] = r
 		wg.Go(func() {
 			r.err = runOne(ctx, dir, name, args, nil, &r.output, &r.output)
+			if bar != nil {
+				bar.Add(1)
+			}
 		})
 	}
 	wg.Wait()
