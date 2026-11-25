@@ -81,8 +81,9 @@ Unless `--conf` is given, runall looks for a `.runallrc` file in the current dir
 ```
 # .runallrc
 # Stream output, one repo at a time.
---sync
+--async
 --command=git pull --rebase
+--progress
 ```
 
 With that file in place, a bare `runall` runs `git pull --rebase` in each subdirectory one at a time. Command-line arguments override the file: `runall --async git status` runs `git status` in parallel.
