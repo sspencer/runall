@@ -80,6 +80,11 @@ Config file:
     --glob=!archive/
     --glob=!ctest/
 
+Placeholders:
+  In both positional commands and --command, '{}' is replaced with the
+  subdirectory name and '{path}' with its absolute path. Use '{{}}' or
+  '{{path}}' for literal braces.
+
 Examples:
   runall git pull
   runall make test
@@ -89,6 +94,7 @@ Examples:
   runall -p git pull
   runall --glob='!archive/' --glob='!ctest/' git pull
   runall -g 'api-*' git status
+  runall echo {} is at {path}
   runall --command='git log -1 --oneline'
   runall --conf=../pull.runallrc git status
   runall sh -c 'git log -1 --oneline | cat'
@@ -263,16 +269,40 @@ func run(ctx context.Context, dirs []string, name string, args []string, bar *pr
 	return results
 }
 
-// runOne runs the command in dir with the given standard streams.
+// expandPlaceholders replaces '{}' with dirName and '{path}' with absPath in
+// name and each element of args. '{{}}' and '{{path}}' escape to literal '{}'
+// and '{path}'.
+func expandPlaceholders(name string, args []string, dirName, absPath string) (string, []string) {
+	r := strings.NewReplacer(
+		"{{}}", "{}",
+		"{{path}}", "{path}",
+		"{}", dirName,
+		"{path}", absPath,
+	)
+	expandedName := r.Replace(name)
+	expandedArgs := make([]string, len(args))
+	for i, a := range args {
+		expandedArgs[i] = r.Replace(a)
+	}
+	return expandedName, expandedArgs
+}
+
+// runOne runs the command in dir with the given standard streams, substituting
+// '{}' and '{path}' placeholders for the directory name and absolute path.
 func runOne(ctx context.Context, dir, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	cmd := exec.CommandContext(ctx, name, args...)
+	absPath, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	expandedName, expandedArgs := expandPlaceholders(name, args, filepath.Base(dir), absPath)
+	cmd := exec.CommandContext(ctx, expandedName, expandedArgs...)
 	cmd.Dir = dir
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	if errors.Is(err, exec.ErrNotFound) {
-		err = fmt.Errorf("command not found: %s", name)
+		err = fmt.Errorf("command not found: %s", expandedName)
 	}
 	return err
 }

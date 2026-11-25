@@ -68,6 +68,7 @@ runall --async git status
 runall -p git pull
 runall --glob='!archive/' --glob='!ctest/' git pull
 runall -g 'api-*' -g '!api-legacy' git status
+runall echo {} is at {path}
 runall --command='git log -1 --oneline'
 runall --conf=../pull.runallrc
 runall sh -c 'git log -1 --oneline | cat'
@@ -104,6 +105,7 @@ With that file in place, a bare `runall` runs `git pull --rebase` in each subdir
 - **Synchronous mode (`-s` / `--sync`):** commands run one at a time in alphabetical order. Each directory's header is printed first, and the command is connected directly to the terminal (stdin, stdout, and stderr), so live progress, colors, and interactive prompts work. Ctrl-C stops the current command and skips the rest.
 - **Progress bar (`-p` / `--progress`):** the total is the number of subdirectories, and the bar advances as each directory's command finishes. It's drawn on stderr using [schollz/progressbar](https://github.com/schollz/progressbar). In parallel mode it updates while commands run and is erased before the results are printed. In synchronous mode it's shown between directories and erased while each command runs, so it doesn't mix with the command's output.
 - **Ordering:** sections are sorted alphabetically, ignoring case.
+- **Placeholders:** in both positional commands and `--command`, `{}` is replaced with the current subdirectory name (e.g. `api`) and `{path}` is replaced with its absolute path (e.g. `/path/to/api`). Use `{{}}` or `{{path}}` to pass literal `{}` or `{path}`.
 - **No shell:** arguments are passed straight to the program. To use pipes, globs, or other shell features, call a shell yourself: `runall sh -c '...'`.
 - **Errors:** a failed command is noted under its directory's section, and a summary such as `runall: 1 of 3 commands failed` is printed to stderr.
 - **Interrupts:** Ctrl-C (SIGINT) or SIGTERM stops all running commands.
