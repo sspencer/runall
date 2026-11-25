@@ -49,6 +49,7 @@ runall [options] --command=<command> [args...]
 | `-s`, `--sync[=true\|false]` | Run synchronously: one directory at a time, in alphabetical order, with output streamed directly to the terminal. Defaults to `false`. |
 | `--async[=true\|false]` | Run in parallel (the default). `--async=false` is the same as `--sync`. If `--sync` and `--async` are both given, the last one wins. |
 | `-p`, `--progress[=true\|false]` | Show a progress bar on stderr that counts subdirectories completed out of the total. Ignored when stderr isn't a terminal. Defaults to `false`. |
+| `-g`, `--glob=<pattern>` | Include or exclude subdirectories matching `<pattern>`. Prefix with `!` to exclude. May be repeated; later globs take precedence. Trailing `/` is optional. |
 | `--command=<cmd>` | The command to run, as a single string (split using shell-style quoting). Use instead of giving the command as trailing arguments; using both is an error. |
 | `--conf=<file>` | Read options from `<file>` instead of `./.runallrc`. The file must exist. `--conf=` (empty) reads no config file at all. |
 | `-h`, `--help` | Print usage |
@@ -65,6 +66,8 @@ runall ls -la
 runall -s git pull
 runall --async git status
 runall -p git pull
+runall --glob='!archive/' --glob='!ctest/' git pull
+runall -g 'api-*' -g '!api-legacy' git status
 runall --command='git log -1 --oneline'
 runall --conf=../pull.runallrc
 runall sh -c 'git log -1 --oneline | cat'
@@ -84,13 +87,18 @@ Unless `--conf` is given, runall looks for a `.runallrc` file in the current dir
 --async
 --command=git pull --rebase
 --progress
+
+# IGNORED DIRECTORIES
+--glob=!archive/
+--glob=!ctest/
 ```
 
-With that file in place, a bare `runall` runs `git pull --rebase` in each subdirectory one at a time. Command-line arguments override the file: `runall --async git status` runs `git status` in parallel.
+With that file in place, a bare `runall` runs `git pull --rebase` in each subdirectory (skipping `archive` and `ctest`). Command-line arguments override the file: `runall --sync git status` runs `git status` synchronously, and command-line `--glob` flags are evaluated after those in `.runallrc` (so `runall --glob='*' git status` includes directories ignored by `.runallrc`).
 
 ## Behavior
 
-- **Directories:** runs in each immediate (non-recursive) subdirectory, including symlinks that point to directories. Hidden directories (names starting with `.`) are skipped.
+- **Directories:** runs in each immediate (non-recursive) subdirectory, including symlinks that point to directories. Hidden directories (names starting with `.`) are skipped unless explicitly matched by a positive `--glob` starting with `.`.
+- **Filtering (`-g` / `--glob`):** follows ripgrep's glob rules. Supports `*`, `?`, `[...]` / `[!...]`, and `{a,b}` brace alternation; leading `/`, `./`, `**/` and trailing `/` are optional. With only negative (`!`) globs, every non-hidden subdirectory is included unless matched. With one or more positive globs, only matching subdirectories are included. When multiple globs match a directory, the last one wins (command-line globs follow config-file globs). Prefix a literal leading `!` with `\!`.
 - **Parallel execution:** all commands start at once, so the total run time is about as long as the slowest directory.
 - **Buffered output:** each directory's stdout and stderr are captured together and printed under a `==> dirname <==` header after every command has finished.
 - **Synchronous mode (`-s` / `--sync`):** commands run one at a time in alphabetical order. Each directory's header is printed first, and the command is connected directly to the terminal (stdin, stdout, and stderr), so live progress, colors, and interactive prompts work. Ctrl-C stops the current command and skips the rest.

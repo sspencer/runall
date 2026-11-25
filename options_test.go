@@ -70,6 +70,8 @@ func TestParseArgs(t *testing.T) {
 		{[]string{"-p", "ls"}, options{progress: true, command: []string{"ls"}}},
 		{[]string{"--progress", "-s", "ls"}, options{sync: true, progress: true, command: []string{"ls"}}},
 		{[]string{"-p", "--progress=false", "ls"}, options{command: []string{"ls"}}},
+		{[]string{"--glob=!archive/", "--glob=!ctest/", "ls"}, options{globs: mustGlobs(t, "!archive/", "!ctest/"), command: []string{"ls"}}},
+		{[]string{"-g", "api*", "-g=!api-old/", "ls"}, options{globs: mustGlobs(t, "api*", "!api-old/"), command: []string{"ls"}}},
 		{[]string{"--", "-weird"}, options{command: []string{"-weird"}}},
 		{nil, options{}},
 	}
@@ -89,6 +91,11 @@ func TestParseArgs(t *testing.T) {
 		{"--command", ""},
 		{"--sync=maybe", "ls"},
 		{"--async=maybe", "ls"},
+		{"--glob=", "ls"},
+		{"--glob=!", "ls"},
+		{"--glob=[bad", "ls"},
+		{"--glob={a,b", "ls"},
+		{"-g", "", "ls"},
 		{"--bogus", "ls"},
 	} {
 		var o options
@@ -167,9 +174,34 @@ func TestResolveOptions(t *testing.T) {
 		t.Errorf("--conf=: got %+v, want %+v", got, want)
 	}
 
+	// Globs from .runallrc are preserved and CLI globs are appended after them.
+	writeFile(t, configFile, "# IGNORED DIRECTORIES\n--glob=!archive/\n--glob=!ctest/\n--command=git status\n")
+	if got, want := resolve(), (options{
+		globs:   mustGlobs(t, "!archive/", "!ctest/"),
+		command: []string{"git", "status"},
+	}); !reflect.DeepEqual(got, want) {
+		t.Errorf(".runallrc globs: got %+v, want %+v", got, want)
+	}
+	if got, want := resolve("--glob=!tmp/", "-g", "archive/", "ls"), (options{
+		globs:   mustGlobs(t, "!archive/", "!ctest/", "!tmp/", "archive/"),
+		command: []string{"ls"},
+	}); !reflect.DeepEqual(got, want) {
+		t.Errorf("merged globs: got %+v, want %+v", got, want)
+	}
+	if got, want := resolve("--conf=", "--glob=api*", "ls"), (options{
+		globs:   mustGlobs(t, "api*"),
+		command: []string{"ls"},
+	}); !reflect.DeepEqual(got, want) {
+		t.Errorf("--conf= clears config globs: got %+v, want %+v", got, want)
+	}
+
 	// Errors: missing --conf file, bad config contents.
 	if _, err := resolveOptions([]string{"--conf=missing.rc", "ls"}); err == nil {
 		t.Error("expected error for missing --conf file")
+	}
+	writeFile(t, configFile, "--glob=[bad\n")
+	if _, err := resolveOptions([]string{"ls"}); err == nil {
+		t.Error("expected error for invalid --glob in .runallrc")
 	}
 	writeFile(t, configFile, "--sync=maybe\n")
 	if _, err := resolveOptions([]string{"ls"}); err == nil {

@@ -59,6 +59,10 @@ Options:
                             Show a progress bar on stderr counting the
                             directories completed. Ignored if stderr is not
                             a terminal. Default: false.
+  -g, --glob=<pattern>      Include or exclude subdirectories matching
+                            <pattern>. Prefix with '!' to exclude. May be
+                            repeated; later globs take precedence. Trailing
+                            '/' is optional.
   --conf=<file>             Read options from <file> instead of ./.runallrc.
                             --conf= (empty) reads no config file at all.
   -h, --help                Show this help.
@@ -73,6 +77,8 @@ Config file:
     # .runallrc
     --sync
     --command=git pull --rebase
+    --glob=!archive/
+    --glob=!ctest/
 
 Examples:
   runall git pull
@@ -81,6 +87,8 @@ Examples:
   runall -s git pull
   runall --async git status
   runall -p git pull
+  runall --glob='!archive/' --glob='!ctest/' git pull
+  runall -g 'api-*' git status
   runall --command='git log -1 --oneline'
   runall --conf=../pull.runallrc git status
   runall sh -c 'git log -1 --oneline | cat'
@@ -102,13 +110,17 @@ func main() {
 	}
 	args := opts.command
 
-	dirs, err := subdirectories(".")
+	dirs, err := subdirectories(".", opts.globs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "runall: %v\n", err)
 		os.Exit(1)
 	}
 	if len(dirs) == 0 {
-		fmt.Fprintln(os.Stderr, "runall: no subdirectories found")
+		if len(opts.globs) > 0 {
+			fmt.Fprintln(os.Stderr, "runall: no matching subdirectories")
+		} else {
+			fmt.Fprintln(os.Stderr, "runall: no subdirectories found")
+		}
 		return
 	}
 
@@ -155,9 +167,11 @@ func main() {
 	}
 }
 
-// subdirectories returns the case-insensitively sorted names of the non-hidden
-// immediate subdirectories of root, including symlinks to directories.
-func subdirectories(root string) ([]string, error) {
+// subdirectories returns the case-insensitively sorted names of the immediate
+// subdirectories of root (including symlinks to directories) that match globs.
+// Hidden directories (starting with '.') are excluded unless explicitly matched
+// by a positive glob starting with '.'.
+func subdirectories(root string, globs []globRule) ([]string, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
@@ -166,7 +180,7 @@ func subdirectories(root string) ([]string, error) {
 	var dirs []string
 	for _, e := range entries {
 		name := e.Name()
-		if strings.HasPrefix(name, ".") {
+		if !matchGlobs(name, globs) {
 			continue
 		}
 		info, err := os.Stat(filepath.Join(root, name))

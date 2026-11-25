@@ -1,3 +1,7 @@
 # .runallrc
 --async
 --command=git pull --rebase
+
+# IGNORED DIRECTORIES
+# --glob=!archive/
+# --glob=!ctest/

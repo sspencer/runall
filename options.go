@@ -16,9 +16,26 @@ const configFile = ".runallrc"
 
 // options holds the settings that control a run.
 type options struct {
-	sync     bool     // run one directory at a time, streaming output
-	progress bool     // show a progress bar
-	command  []string // program name followed by its arguments
+	sync     bool       // run one directory at a time, streaming output
+	progress bool       // show a progress bar
+	globs    []globRule // directory include/exclude globs, in order
+	command  []string   // program name followed by its arguments
+}
+
+// globFlag appends compiled glob rules for repeatable -g/--glob flags.
+type globFlag struct {
+	globs *[]globRule
+}
+
+func (g globFlag) String() string { return "" }
+
+func (g globFlag) Set(s string) error {
+	rule, err := parseGlob(s)
+	if err != nil {
+		return err
+	}
+	*g.globs = append(*g.globs, rule)
+	return nil
 }
 
 // modeFlag is a boolean flag that sets the run mode. For --sync it sets sync
@@ -91,6 +108,8 @@ func parseArgs(args []string, opts *options) (conf string, confSet bool, err err
 	fs.Var(modeFlag{sync: &opts.sync, invert: true}, "async", "")
 	fs.BoolVar(&opts.progress, "p", opts.progress, "")
 	fs.BoolVar(&opts.progress, "progress", opts.progress, "")
+	fs.Var(globFlag{globs: &opts.globs}, "g", "")
+	fs.Var(globFlag{globs: &opts.globs}, "glob", "")
 	var command string
 	fs.StringVar(&command, "command", "", "")
 	fs.StringVar(&conf, "conf", "", "")
